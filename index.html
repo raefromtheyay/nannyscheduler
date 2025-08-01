@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nanny Schedule & Invoice Planner</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lucide-react/0.263.1/lucide-react.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        const { Calendar, Clock, DollarSign, Plus, Minus, Save } = lucide;
+
+        const NannyScheduler = () => {
+          // Federal holidays for 2025
+          const federalHolidays = {
+            '2025-01-01': 'New Year\'s Day',
+            '2025-01-20': 'Martin Luther King Jr. Day',
+            '2025-02-17': 'Presidents\' Day',
+            '2025-05-26': 'Memorial Day',
+            '2025-07-04': 'Independence Day',
+            '2025-09-01': 'Labor Day',
+            '2025-10-13': 'Columbus Day',
+            '2025-11-11': 'Veterans Day',
+            '2025-11-27': 'Thanksgiving Day',
+            '2025-12-25': 'Christmas Day'
+          };
+
+          const [currentWeekStart, setCurrentWeekStart] = useState(() => {
+            const today = new Date();
+            const saturday = new Date(today);
+            // Find the most recent Saturday
+            saturday.setDate(today.getDate() - ((today.getDay() + 1) % 7));
+            return saturday;
+          });
+
+          const [schedules, setSchedules] = useState(() => {
+            // Load from localStorage if available
+            const saved = localStorage.getItem('nannySchedules');
+            return saved ? JSON.parse(saved) : {};
+          });
+          const [viewMode, setViewMode] = useState('current'); // 'current' or 'past'
+
+          // Save to localStorage whenever schedules change
+          useEffect(() => {
+            localStorage.setItem('nannySchedules', JSON.stringify(schedules));
+          }, [schedules]);
+
+          // Generate 5 weeks of data (current/future or past)
+          const generateWeeks = () => {
+            const weeks = [];
+            if (viewMode === 'current') {
+              // Current and future weeks
+              for (let i = 0; i < 5; i++) {
+                const weekStart = new Date(currentWeekStart);
+                weekStart.setDate(currentWeekStart.getDate() + (i * 7));
+                weeks.push(weekStart);
+              }
+            } else {
+              // Past weeks - show 8 weeks before current week
+              for (let i = 8; i >= 1; i--) {
+                const weekStart = new Date(currentWeekStart);
+                weekStart.setDate(currentWeekStart.getDate() - (i * 7));
+                weeks.push(weekStart);
+              }
+            }
+            return weeks;
+          };
+
+          const weeks = generateWeeks();
+
+          // Initialize default schedule for a week
+          const initializeWeek = (weekStart) => {
+            const weekKey = weekStart.toISOString().split('T')[0];
+            if (!schedules[weekKey]) {
+              const defaultSchedule = {
+                days: {},
+                sickDays: 0,
+                notes: ''
+              };
+
+              // Initialize each day of the week
+              for (let i = 0; i < 7; i++) {
+                const date = new Date(weekStart);
+                date.setDate(weekStart.getDate() + i);
+                const dateKey = date.toISOString().split('T')[0];
+                const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
+
+                // Check if it's a federal holiday
+                const isHoliday = federalHolidays[dateKey];
+                
+                // Default hours for Monday-Friday
+                const isWeekday = date.getDay() >= 1 && date.getDay() <= 5;
+                
+                defaultSchedule.days[dateKey] = {
+                  date: dateKey,
+                  dayName,
+                  isHoliday,
+                  holidayName: isHoliday || null,
+                  startTime: isWeekday ? '08:30' : '',
+                  endTime: isWeekday ? '17:30' : '',
+                  actualHours: isHoliday ? 8 : (isWeekday ? 9 : 0),
+                  notes: ''
+                };
+              }
+
+              setSchedules(prev => ({
+                ...prev,
+                [weekKey]: defaultSchedule
+              }));
+            }
+          };
+
+          // Initialize all weeks
+          useEffect(() => {
+            weeks.forEach(week => initializeWeek(week));
+          }, [currentWeekStart]);
+
+          const updateDaySchedule = (weekKey, dateKey, field, value) => {
+            setSchedules(prev => ({
+              ...prev,
+              [weekKey]: {
+                ...prev[weekKey],
+                days: {
+                  ...prev[weekKey].days,
+                  [dateKey]: {
+                    ...prev[weekKey].days[dateKey],
+                    [field]: value
+                  }
+                }
+              }
+            }));
+          };
+
+          const updateWeekData = (weekKey, field, value) => {
+            setSchedules(prev => ({
+              ...prev,
+              [weekKey]: {
+                ...prev[weekKey],
+                [field]: value
+              }
+            }));
+          };
+
+          const calculateWeeklyInvoice = (weekKey) => {
+            const week = schedules[weekKey];
+            if (!week) return { totalHours: 0, regularPay: 0, overtimePay: 0, holidayPay: 0, totalPay: 0 };
+
+            let totalHours = 0;
+            let holidayHours = 0;
+
+            Object.values(week.days).forEach(day => {
+              if (day.isHoliday) {
+                holidayHours += day.actualHours;
+              }
+              totalHours += day.actualHours;
+            });
+
+            const regularHours = Math.min(totalHours, 40);
+            const overtimeHours = Math.max(totalHours - 40, 0);
+            const guaranteedHours = Math.max(regularHours, 40);
+
+            const regularPay = guaranteedHours * 33;
+            const overtimePay = overtimeHours * 49.5;
+            const holidayPay = 0; // Holiday hours are already included in regular/overtime calculations
+
+            return {
+              totalHours,
+              regularHours: guaranteedHours,
+              overtimeHours,
+              holidayHours,
+              regularPay,
+              overtimePay,
+              holidayPay,
+              totalPay: regularPay + overtimePay
+            };
+          };
+
+          const formatDate = (date) => {
+            return date.toLocaleDateString('en-US', { 
+              month: 'short', 
+              day: 'numeric',
+              year: 'numeric'
+            });
+          };
+
+          const getWeekRange = (weekStart) => {
+            const weekEnd = new Date(weekStart);
+            weekEnd.setDate(weekStart.getDate() + 6);
+            return `${formatDate(weekStart)} - ${formatDate(weekEnd)}`;
+          };
+
+          const navigateWeeks = (direction) => {
+            const newStart = new Date(currentWeekStart);
+            newStart.setDate(currentWeekStart.getDate() + (direction * 7));
+            setCurrentWeekStart(newStart);
+          };
+
+          const exportData = () => {
+            const dataStr = JSON.stringify(schedules, null, 2);
+            const dataBlob = new Blob([dataStr], {type: 'application/json'});
+            const url = URL.createObjectURL(dataBlob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'nanny-schedule-backup.json';
+            link.click();
+          };
+
+          const importData = (event) => {
+            const file = event.target.files[0];
+            if (file) {
+              const reader = new FileReader();
+              reader.onload = (e) => {
+                try {
+                  const importedData = JSON.parse(e.target.result);
+                  setSchedules(importedData);
+                  alert('Data imported successfully!');
+                } catch (error) {
+                  alert('Error importing data. Please check the file format.');
+                }
+              };
+              reader.readAsText(file);
+            }
+          };
+
+          return React.createElement('div', { className: "max-w-7xl mx-auto p-6 bg-gray-50 min-h-screen" },
+            React.createElement('div', { className: "bg-white rounded-lg shadow-lg p-6 mb-6" },
+              React.createElement('div', { className: "flex items-center justify-between mb-6" },
+                React.createElement('div', { className: "flex items-center space-x-3" },
+                  React.createElement(Calendar, { className: "w-8 h-8 text-blue-600" }),
+                  React.createElement('div', null,
+                    React.createElement('h1', { className: "text-2xl font-bold text-gray-800" }, "Nanny Schedule & Invoice Planner"),
+                    React.createElement('p', { className: "text-gray-600" },
+                      viewMode === 'current' ? '5-week rolling schedule with automatic invoicing' : 'Historical schedules and invoices'
+                    )
+                  )
+                ),
+                React.createElement('div', { className: "flex items-center space-x-4" },
+                  // View Mode Toggle
+                  React.createElement('div', { className: "flex bg-gray-100 rounded-lg p-1" },
+                    React.createElement('button', {
+                      onClick: () => setViewMode('current'),
+                      className: `px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                        viewMode === 'current' 
+                          ? 'bg-blue-600 text-white shadow-sm' 
+                          : 'text-gray-600 hover:text-gray-900'
+                      }`
+                    }, "Current & Future"),
+                    React.createElement('button', {
+                      onClick: () => setViewMode('past'),
+                      className: `px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                        viewMode === 'past' 
+                          ? 'bg-blue-600 text-white shadow-sm' 
+                          : 'text-gray-600 hover:text-gray-900'
+                      }`
+                    }, "Past Weeks")
+                  ),
+                  
+                  // Export/Import buttons
+                  React.createElement('div', { className: "flex items-center space-x-2" },
+                    React.createElement('button', {
+                      onClick: exportData,
+                      className: "px-3 py-2 bg-green-100 hover:bg-green-200 text-green-700 rounded-lg text-sm transition-colors",
+                      title: "Export data backup"
+                    }, "Export"),
+                    React.createElement('label', {
+                      className: "px-3 py-2 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded-lg text-sm transition-colors cursor-pointer",
+                      title: "Import data backup"
+                    }, "Import",
+                      React.createElement('input', {
+                        type: "file",
+                        accept: ".json",
+                        onChange: importData,
+                        className: "hidden"
+                      })
+                    )
+                  ),
+                  
+                  // Navigation buttons
+                  React.createElement('div', { className: "flex items-center space-x-2" },
+                    React.createElement('button', {
+                      onClick: () => navigateWeeks(-1),
+                      className: "p-2 bg-blue-100 hover:bg-blue-200 rounded-lg transition-colors",
+                      title: viewMode === 'current' ? 'Previous week range' : 'Earlier weeks'
+                    }, React.createElement(Minus, { className: "w-4 h-4 text-blue-600" })),
+                    React.createElement('button', {
+                      onClick: () => navigateWeeks(1),
+                      className: "p-2 bg-blue-100 hover:bg-blue-200 rounded-lg transition-colors",
+                      title: viewMode === 'current' ? 'Next week range' : 'Later weeks'
+                    }, React.createElement(Plus, { className: "w-4 h-4 text-blue-600" }))
+                  )
+                )
+              ),
+
+              React.createElement('div', { className: "space-y-8" },
+                weeks.map((weekStart, weekIndex) => {
+                  const weekKey = weekStart.toISOString().split('T')[0];
+                  const week = schedules[weekKey] || { days: {}, sickDays: 0, notes: '' };
+                  const invoice = calculateWeeklyInvoice(weekKey);
+                  const isPastWeek = weekStart < new Date(new Date().getTime() - 7 * 24 * 60 * 60 * 1000);
+                  const isCurrentWeek = viewMode === 'current' && weekIndex === 0;
+                  const isReadOnly = viewMode === 'past';
+
+                  return React.createElement('div', {
+                    key: weekKey,
+                    className: `border rounded-lg p-6 ${
+                      isCurrentWeek ? 'border-blue-300 bg-blue-50' : 
+                      viewMode === 'past' ? 'border-gray-200 bg-gray-50' : 'border-gray-200 bg-white'
+                    }`
+                  },
+                    React.createElement('div', { className: "flex items-center justify-between mb-4" },
+                      React.createElement('div', { className: "flex items-center space-x-3" },
+                        React.createElement('h3', { className: "text-lg font-semibold text-gray-800" },
+                          `${viewMode === 'past' ? `Week ${weekIndex + 1}:` : `Week ${weekIndex + 1}:`} ${getWeekRange(weekStart)}`
+                        ),
+                        isCurrentWeek && React.createElement('span', {
+                          className: "bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm font-medium"
+                        }, "Current Week"),
+                        viewMode === 'past' && React.createElement('span', {
+                          className: "bg-gray-100 text-gray-600 px-2 py-1 rounded-full text-sm font-medium"
+                        }, "Completed"),
+                        isPastWeek && viewMode === 'current' && React.createElement('span', {
+                          className: "bg-green-100 text-green-800 px-2 py-1 rounded-full text-sm font-medium"
+                        }, "Complete")
+                      ),
+                      React.createElement('div', { className: "text-right" },
+                        React.createElement('div', { className: "text-sm text-gray-600" }, `Total Hours: ${invoice.totalHours}`),
+                        React.createElement('div', { className: "text-lg font-bold text-green-600" }, `$${invoice.totalPay.toFixed(2)}`)
+                      )
+                    ),
+
+                    // Daily Schedule Grid
+                    React.createElement('div', { className: "grid grid-cols-7 gap-3 mb-4" },
+                      Object.values(week.days).sort((a, b) => new Date(a.date) - new Date(b.date)).map(day =>
+                        React.createElement('div', {
+                          key: day.date,
+                          className: `p-3 rounded-lg border ${day.isHoliday ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'}`
+                        },
+                          React.createElement('div', { className: "text-sm font-medium text-gray-700 mb-1" }, day.dayName),
+                          React.createElement('div', { className: "text-xs text-gray-500 mb-2" },
+                            new Date(day.date).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })
+                          ),
+                          
+                          day.isHoliday && React.createElement('div', { className: "text-xs text-red-600 font-medium mb-2" }, day.holidayName),
+
+                          React.createElement('div', { className: "space-y-2" },
+                            !day.isHoliday && React.createElement(React.Fragment, null,
+                              React.createElement('input', {
+                                type: "time",
+                                value: day.startTime,
+                                onChange: (e) => updateDaySchedule(weekKey, day.date, 'startTime', e.target.value),
+                                className: "w-full text-xs p-1 border rounded",
+                                placeholder: "Start",
+                                disabled: isReadOnly
+                              }),
+                              React.createElement('input', {
+                                type: "time",
+                                value: day.endTime,
+                                onChange: (e) => updateDaySchedule(weekKey, day.date, 'endTime', e.target.value),
+                                className: "w-full text-xs p-1 border rounded",
+                                placeholder: "End",
+                                disabled: isReadOnly
+                              })
+                            ),
+                            React.createElement('div', { className: "flex items-center space-x-1" },
+                              React.createElement('span', { className: "text-xs text-gray-600" }, "Hours:"),
+                              React.createElement('input', {
+                                type: "number",
+                                step: "0.5",
+                                min: "0",
+                                max: "24",
+                                value: day.actualHours,
+                                onChange: (e) => updateDaySchedule(weekKey, day.date, 'actualHours', parseFloat(e.target.value) || 0),
+                                className: "w-16 text-xs p-1 border rounded text-center",
+                                disabled: isReadOnly
+                              })
+                            )
+                          )
+                        )
+                      )
+                    ),
+
+                    // Week Summary
+                    React.createElement('div', { className: "flex flex-wrap gap-4 items-center justify-between pt-4 border-t border-gray-200" },
+                      React.createElement('div', { className: "flex items-center space-x-4" },
+                        React.createElement('div', { className: "flex items-center space-x-2" },
+                          React.createElement('span', { className: "text-sm text-gray-600" }, "Sick Days:"),
+                          React.createElement('input', {
+                            type: "number",
+                            min: "0",
+                            value: week.sickDays,
+                            onChange: (e) => updateWeekData(weekKey, 'sickDays', parseInt(e.target.value) || 0),
+                            className: "w-16 text-sm p-1 border rounded text-center",
+                            disabled: isReadOnly
+                          })
+                        ),
+                        React.createElement('div', { className: "text-sm text-gray-600" }, `Holiday Hours: ${invoice.holidayHours}`)
+                      ),
+                      
+                      React.createElement('div', { className: "flex items-center space-x-6 text-sm" },
+                        React.createElement('div', { className: "text-gray-600" },
+                          `Regular: ${invoice.regularHours}h × $33 = `,
+                          React.createElement('span', { className: "font-medium" }, `$${invoice.regularPay.toFixed(2)}`)
+                        ),
+                        invoice.overtimeHours > 0 && React.createElement('div', { className: "text-orange-600" },
+                          `Overtime: ${invoice.overtimeHours}h × $49.50 = `,
+                          React.createElement('span', { className: "font-medium" }, `$${invoice.overtimePay.toFixed(2)}`)
+                        ),
+                        React.createElement('div', { className: "text-green-600 font-bold" }, `Total: $${invoice.totalPay.toFixed(2)}`)
+                      )
+                    ),
+
+                    // Notes
+                    React.createElement('div', { className: "mt-4" },
+                      React.createElement('textarea', {
+                        placeholder: "Week notes...",
+                        value: week.notes,
+                        onChange: (e) => updateWeekData(weekKey, 'notes', e.target.value),
+                        className: "w-full text-sm p-2 border rounded-lg resize-none",
+                        rows: "2",
+                        disabled: isReadOnly
+                      })
+                    )
+                  );
+                })
+              ),
+
+              // Summary Statistics
+              React.createElement('div', { className: "mt-8 bg-gray-100 rounded-lg p-6" },
+                React.createElement('h3', { className: "text-lg font-semibold text-gray-800 mb-4 flex items-center" },
+                  React.createElement(DollarSign, { className: "w-5 h-5 mr-2" }),
+                  viewMode === 'current' ? '5-Week Summary' : `${weeks.length}-Week Historical Summary`
+                ),
+                React.createElement('div', {
+                  className: `grid ${weeks.length <= 5 ? `grid-cols-${Math.min(weeks.length, 5)}` : 'grid-cols-4'} gap-6 text-center`
+                },
+                  weeks.map((weekStart, index) => {
+                    const weekKey = weekStart.toISOString().split('T')[0];
+                    const invoice = calculateWeeklyInvoice(weekKey);
+                    return React.createElement('div', { key: weekKey, className: "bg-white rounded-lg p-4" },
+                      React.createElement('div', { className: "text-sm text-gray-600 mb-1" },
+                        viewMode === 'past' ? formatDate(weekStart) : `Week ${index + 1}`
+                      ),
+                      React.createElement('div', { className: "text-lg font-bold text-green-600" }, `$${invoice.totalPay.toFixed(2)}`),
+                      React.createElement('div', { className: "text-xs text-gray-500" }, `${invoice.totalHours} hours`)
+                    );
+                  })
+                ),
+                React.createElement('div', { className: "mt-4 text-center" },
+                  React.createElement('div', { className: "text-2xl font-bold text-green-600" },
+                    `Total ${viewMode === 'current' ? '5-Week Projection' : `${weeks.length}-Week Total`}: $${weeks.reduce((sum, weekStart) => {
+                      const weekKey = weekStart.toISOString().split('T')[0];
+                      return sum + calculateWeeklyInvoice(weekKey).totalPay;
+                    }, 0).toFixed(2)}`
+                  )
+                )
+              )
+            )
+          );
+        };
+
+        ReactDOM.render(React.createElement(NannyScheduler), document.getElementById('root'));
+    </script>
+</body>
+</html>
